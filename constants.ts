@@ -81,3 +81,122 @@ export const MOCK_DATA: UsageReport = {
     },
   },
 };
+
+export const COLLECTOR_SCRIPT_TEMPLATE = `const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+// === CONFIGURATION ===
+const HOME = os.homedir();
+// Default paths for Claude
+const CLAUDE_DIR = path.join(HOME, '.claude');
+const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
+
+async function collectClaudeUsage() {
+  console.log('\\x1b[36m%s\\x1b[0m', '🔍 LLM Usage Analyzer - Local Agent');
+  console.log('scanning directory:', PROJECTS_DIR);
+  
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error('\\x1b[31m%s\\x1b[0m', '❌ Claude projects directory not found at ' + PROJECTS_DIR);
+    console.log('Please ensure you have Claude Code installed and have run projects.');
+    return;
+  }
+
+  const usage = {
+    provider: 'anthropic',
+    source: 'local_agent',
+    period: { start: new Date().toISOString(), end: new Date().toISOString() },
+    plan: { name: 'Claude Pro', price_usd: 20, type: 'subscription' },
+    usage: {
+      tokens: { input: 0, output: 0, cached: 0, by_model: {} },
+      messages: { count: 0, by_day: [] },
+      sessions: { count: 0 }
+    }
+  };
+
+  const dayMap = {};
+  let minDate = new Date();
+  let maxDate = new Date(0);
+  let filesProcessed = 0;
+
+  try {
+    const projects = fs.readdirSync(PROJECTS_DIR);
+    
+    for (const project of projects) {
+      const projectPath = path.join(PROJECTS_DIR, project);
+      if (!fs.statSync(projectPath).isDirectory()) continue;
+
+      // Look for session files
+      const files = fs.readdirSync(projectPath).filter(f => f.endsWith('.jsonl'));
+      
+      for (const file of files) {
+        usage.usage.sessions.count++;
+        filesProcessed++;
+        
+        const content = fs.readFileSync(path.join(projectPath, file), 'utf-8');
+        const lines = content.split('\\n');
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line);
+            if (entry.message && entry.message.usage) {
+              const { input_tokens, output_tokens, cache_read_input_tokens } = entry.message.usage;
+              const model = entry.message.model;
+              const ts = new Date(entry.timestamp || Date.now());
+
+              if (ts < minDate) minDate = ts;
+              if (ts > maxDate) maxDate = ts;
+
+              // Tokens
+              usage.usage.tokens.input += (input_tokens || 0);
+              usage.usage.tokens.output += (output_tokens || 0);
+              usage.usage.tokens.cached += (cache_read_input_tokens || 0);
+
+              // By Model
+              if (!usage.usage.tokens.by_model[model]) {
+                usage.usage.tokens.by_model[model] = { input: 0, output: 0 };
+              }
+              usage.usage.tokens.by_model[model].input += (input_tokens || 0);
+              usage.usage.tokens.by_model[model].output += (output_tokens || 0);
+
+              // Messages & Days
+              usage.usage.messages.count++;
+              const dateKey = ts.toISOString().split('T')[0];
+              if (!dayMap[dateKey]) {
+                dayMap[dateKey] = { count: 0, input: 0, output: 0 };
+              }
+              dayMap[dateKey].count++;
+              dayMap[dateKey].input += (input_tokens || 0);
+              dayMap[dateKey].output += (output_tokens || 0);
+            }
+          } catch (e) {
+            // ignore partial lines
+          }
+        }
+      }
+    }
+
+    if (filesProcessed === 0) {
+      console.log('\\x1b[33m%s\\x1b[0m', '⚠️  No usage history files found in projects.');
+      return;
+    }
+
+    // Finalize
+    usage.period.start = minDate.toISOString();
+    usage.period.end = maxDate.toISOString();
+    usage.usage.messages.by_day = Object.entries(dayMap).map(([date, data]) => ({
+      date, ...data
+    })).sort((a, b) => a.date.localeCompare(b.date));
+
+    const outFile = 'usage_report.json';
+    fs.writeFileSync(outFile, JSON.stringify(usage, null, 2));
+    console.log('\\x1b[32m%s\\x1b[0m', '✅ Report generated: ' + outFile);
+    console.log('👉 Upload this file to the web dashboard.');
+
+  } catch (err) {
+    console.error('Error scanning files:', err);
+  }
+}
+
+collectClaudeUsage();`;
