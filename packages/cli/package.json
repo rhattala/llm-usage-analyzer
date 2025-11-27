@@ -1,0 +1,54 @@
+{
+  "name": "@llm-usage/cli",
+  "version": "1.0.0",
+  "description": "CLI tool for analyzing LLM usage from Claude Code and other providers",
+  "type": "module",
+  "bin": {
+    "llm-usage": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "build:cjs": "tsup src/index.ts --format cjs --clean --out-dir dist-cjs",
+    "build:binary": "npm run build:cjs && pkg dist-cjs/index.js --targets node18-win-x64,node18-macos-x64,node18-linux-x64 --out-path dist/bin",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "glob": "^10.4.5",
+    "ora": "^8.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.6",
+    "pkg": "^5.8.1",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "keywords": [
+    "llm",
+    "usage",
+    "analyzer",
+    "claude",
+    "openai",
+    "tokens",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rhattala/llm-usage-analyzer.git",
+    "directory": "packages/cli"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

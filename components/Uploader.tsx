@@ -1,18 +1,23 @@
-import React, { useState } from 'react';
-import { 
-  Upload, Play, Terminal, Key, FileJson, Copy, Check, 
-  Bot, Sparkles, ChevronRight, Download, Server, AlertCircle, 
-  ArrowLeft, ShieldCheck, FileUp, Lock, EyeOff
+import React, { useState, useEffect } from 'react';
+import {
+  Upload, Play, Terminal, Key, FileJson, Copy, Check,
+  Bot, Sparkles, ChevronRight, Download, Server, AlertCircle,
+  ArrowLeft, ShieldCheck, FileUp, Lock, EyeOff, Loader2, Calendar,
+  ExternalLink, HelpCircle, Globe, Folder, Info, DollarSign, Wifi, RefreshCw
 } from 'lucide-react';
 import { UsageReport } from '../types';
-import { COLLECTOR_SCRIPT_TEMPLATE } from '../constants';
+import { COLLECTOR_SCRIPT_TEMPLATE, PLANS_DATABASE } from '../constants';
+import { fetchOpenAIUsage, isValidOpenAIKey, testOpenAIConnection } from '../services/openaiService';
+
+// Claude subscription plans for selection
+const CLAUDE_PLANS = PLANS_DATABASE.filter(p => p.provider === 'anthropic' && p.type === 'subscription');
 
 interface UploaderProps {
-  onDataLoaded: (data: UsageReport) => void;
+  onDataLoaded: (data: UsageReport, fromLiveServer?: boolean) => void;
   onLoadDemo: () => void;
 }
 
-type ViewState = 'main' | 'anthropic-options' | 'anthropic-cli' | 'anthropic-web' | 'openai' | 'upload';
+type ViewState = 'main' | 'anthropic-options' | 'anthropic-cli' | 'anthropic-web' | 'openai' | 'openai-manual' | 'upload';
 
 const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
   const [view, setView] = useState<ViewState>('main');
@@ -20,6 +25,76 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState(CLAUDE_PLANS[0]); // Default to first plan
+  const [dateRange, setDateRange] = useState({
+    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 days ago
+    end: new Date().toISOString().split('T')[0], // today
+  });
+
+  // Local server detection state
+  const [localServerStatus, setLocalServerStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
+  const [localServerLoading, setLocalServerLoading] = useState(false);
+  const LOCAL_SERVER_URL = 'http://localhost:3456';
+
+  // Check for local server on mount and when CLI view is shown
+  useEffect(() => {
+    const checkLocalServer = async () => {
+      setLocalServerStatus('checking');
+      try {
+        const response = await fetch(`${LOCAL_SERVER_URL}/api/health`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(2000), // 2 second timeout
+        });
+        if (response.ok) {
+          setLocalServerStatus('available');
+        } else {
+          setLocalServerStatus('unavailable');
+        }
+      } catch {
+        setLocalServerStatus('unavailable');
+      }
+    };
+
+    // Check immediately and when view changes to CLI
+    if (view === 'anthropic-cli' || view === 'main') {
+      checkLocalServer();
+    }
+  }, [view]);
+
+  const loadFromLocalServer = async () => {
+    setLocalServerLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${LOCAL_SERVER_URL}/api/usage`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch usage data from local server');
+      }
+      const report = await response.json() as UsageReport;
+      onDataLoaded(report, true); // true = from live server
+    } catch (err) {
+      setError(`Failed to load from local server: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setLocalServerLoading(false);
+    }
+  };
+
+  const refreshLocalServerCheck = async () => {
+    setLocalServerStatus('checking');
+    try {
+      const response = await fetch(`${LOCAL_SERVER_URL}/api/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(2000),
+      });
+      if (response.ok) {
+        setLocalServerStatus('available');
+      } else {
+        setLocalServerStatus('unavailable');
+      }
+    } catch {
+      setLocalServerStatus('unavailable');
+    }
+  };
 
   // --- Logic Helpers ---
 
@@ -40,7 +115,7 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
       provider: 'anthropic',
       source: 'manual_upload',
       period: { start: new Date().toISOString(), end: new Date().toISOString() },
-      plan: { name: 'Claude Pro', price_usd: 20, type: 'subscription' },
+      plan: { name: selectedPlan.name, price_usd: selectedPlan.price_usd, type: 'subscription' },
       usage: {
         tokens: { input: 0, output: 0, cached: 0, by_model: {} },
         messages: { count: 0, by_day: [] },
@@ -83,7 +158,7 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
       .map(([date, stats]) => ({ date, ...stats }))
       .sort((a, b) => a.date.localeCompare(b.date));
       
-    usage.usage.tokens.by_model['claude-3-5-sonnet-estimated'] = {
+    usage.usage.tokens.by_model['Claude (estimated)'] = {
       input: usage.usage.tokens.input,
       output: usage.usage.tokens.output
     };
@@ -138,13 +213,50 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
 
   const handleApiKeySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("Direct API connection is a Pro feature. Please use the Local Agent script for now.");
+    setError(null);
+
+    if (!apiKey.trim()) {
+      setError('Please enter an API key');
+      return;
+    }
+
+    if (!isValidOpenAIKey(apiKey)) {
+      setError('Invalid API key format. OpenAI keys start with "sk-"');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Test connection first
+      const test = await testOpenAIConnection(apiKey);
+      if (!test.success) {
+        setError(test.error || 'Failed to connect to OpenAI');
+        setIsLoading(false);
+        return;
+      }
+
+      // Fetch usage data
+      const startDate = new Date(dateRange.start);
+      const endDate = new Date(dateRange.end);
+      endDate.setHours(23, 59, 59, 999); // End of day
+
+      const report = await fetchOpenAIUsage(apiKey, startDate, endDate);
+      onDataLoaded(report);
+    } catch (err) {
+      setError(`Failed to fetch usage: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
+      setApiKey(''); // Clear API key from memory
+    }
   };
 
   const goBack = () => {
     setError(null);
     if (view === 'anthropic-cli' || view === 'anthropic-web') {
       setView('anthropic-options');
+    } else if (view === 'openai-manual') {
+      setView('openai');
     } else {
       setView('main');
     }
@@ -217,10 +329,11 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
                 </button>
                 <div className="h-6 w-px bg-white/10"></div>
                 <h2 className="text-xl font-semibold text-white">
-                  {view === 'anthropic-options' ? 'Anthropic Source' :
-                   view === 'anthropic-cli' ? 'Local Workbench' :
-                   view === 'anthropic-web' ? 'Claude.ai Export' :
-                   view === 'openai' ? 'OpenAI Connection' : 'Upload File'}
+                  {view === 'anthropic-options' ? 'Anthropic / Claude' :
+                   view === 'anthropic-cli' ? 'Claude Code (CLI)' :
+                   view === 'anthropic-web' ? 'Claude.ai Web Export' :
+                   view === 'openai' ? 'OpenAI / ChatGPT' :
+                   view === 'openai-manual' ? 'Manual Usage Entry' : 'Upload File'}
                 </h2>
               </div>
             )}
@@ -238,7 +351,44 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
 
             {/* VIEW: MAIN */}
             {view === 'main' && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
+                {/* Local Server Banner on Home */}
+                {localServerStatus === 'available' && (
+                  <div className="p-5 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border border-emerald-500/30 rounded-xl shadow-lg">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="p-3 bg-emerald-500/20 rounded-xl">
+                          <Wifi className="w-7 h-7 text-emerald-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            Claude Code Data Ready
+                            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+                          </h3>
+                          <p className="text-slate-400 text-sm">Local server detected - load your usage data instantly</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={loadFromLocalServer}
+                        disabled={localServerLoading}
+                        className="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-white font-bold rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40"
+                      >
+                        {localServerLoading ? (
+                          <>
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            Loading...
+                          </>
+                        ) : (
+                          <>
+                            Analyze My Usage <ChevronRight className="w-5 h-5" />
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <OptionCard 
                   icon={<Bot className="w-8 h-8" />}
                   title="Anthropic / Claude"
@@ -255,7 +405,7 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
                   colorClass="text-emerald-400"
                   bgHoverClass="hover:bg-emerald-500/5"
                 />
-                <OptionCard 
+                <OptionCard
                   icon={<FileUp className="w-8 h-8" />}
                   title="Upload Report"
                   description="Already have a usage_report.json? Drop it here to visualize."
@@ -263,133 +413,404 @@ const Uploader: React.FC<UploaderProps> = ({ onDataLoaded, onLoadDemo }) => {
                   colorClass="text-blue-400"
                   bgHoverClass="hover:bg-blue-500/5"
                 />
+                </div>
               </div>
             )}
 
             {/* VIEW: ANTHROPIC OPTIONS */}
             {view === 'anthropic-options' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-right-8 duration-500">
-                <OptionCard 
-                  icon={<Terminal className="w-8 h-8" />}
-                  title="Local Workbench (CLI)"
-                  description="Scan your local ~/.claude folder to analyze coding agent usage. Runs 100% locally."
-                  onClick={() => setView('anthropic-cli')}
-                  colorClass="text-indigo-400"
-                  bgHoverClass="hover:bg-indigo-500/5"
-                />
-                <OptionCard 
-                  icon={<Server className="w-8 h-8" />}
-                  title="Web Chat Export"
-                  description="Upload conversations.json from your Claude.ai account export."
-                  onClick={() => setView('anthropic-web')}
-                  colorClass="text-purple-400"
-                  bgHoverClass="hover:bg-purple-500/5"
-                />
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+                {/* Help text */}
+                <div className="p-4 bg-orange-500/5 border border-orange-500/20 rounded-xl">
+                  <div className="flex items-start gap-3">
+                    <Info className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
+                    <div className="text-sm text-slate-300">
+                      <strong className="text-orange-400">Where's my Claude usage data?</strong>
+                      <p className="mt-1 text-slate-400">Anthropic doesn't provide a public API for usage stats yet. Choose how you use Claude to get your data:</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <OptionCard
+                    icon={<Terminal className="w-8 h-8" />}
+                    title="Claude Code (CLI)"
+                    description="Using Claude Code in VS Code, Cursor, or terminal? We can scan your local session files."
+                    onClick={() => setView('anthropic-cli')}
+                    colorClass="text-indigo-400"
+                    bgHoverClass="hover:bg-indigo-500/5"
+                  />
+                  <OptionCard
+                    icon={<Globe className="w-8 h-8" />}
+                    title="Claude.ai (Web)"
+                    description="Using claude.ai in your browser? Export your conversation history."
+                    onClick={() => setView('anthropic-web')}
+                    colorClass="text-purple-400"
+                    bgHoverClass="hover:bg-purple-500/5"
+                  />
+                </div>
+
+                {/* Quick links */}
+                <div className="flex items-center justify-center gap-6 pt-4 text-xs">
+                  <a
+                    href="https://console.anthropic.com/settings/usage"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-slate-500 hover:text-slate-300 flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Anthropic Console (API users)
+                  </a>
+                  <a
+                    href="https://support.anthropic.com/en/articles/9362598-how-do-i-export-my-conversations"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-slate-500 hover:text-slate-300 flex items-center gap-1"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                    Export help docs
+                  </a>
+                </div>
               </div>
             )}
 
             {/* VIEW: CLI SETUP */}
             {view === 'anthropic-cli' && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in slide-in-from-right-8 duration-500">
-                <div className="space-y-6">
-                  <div>
-                    <h3 className="text-2xl font-bold text-white mb-2">Run the Collector Agent</h3>
-                    <p className="text-slate-400 leading-relaxed">
-                      This secure script scans your local Claude projects to summarize usage. 
-                    </p>
-                    {/* Security Explanation */}
-                    <div className="mt-4 p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 flex gap-3">
-                      <Lock className="w-5 h-5 text-emerald-400 shrink-0" />
-                      <div className="text-xs text-slate-300 leading-relaxed">
-                        <strong className="text-emerald-400 block mb-1">Why this is secure</strong>
-                        The script runs entirely on your machine. No code, prompts, or sensitive files are uploaded to our servers. Only the final token counts are generated.
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+                {/* Local Server Detection Banner */}
+                {localServerStatus === 'available' && (
+                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl shadow-lg shadow-emerald-500/5">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-emerald-500/20 rounded-lg">
+                          <Wifi className="w-5 h-5 text-emerald-400" />
+                        </div>
+                        <div>
+                          <h4 className="text-emerald-400 font-semibold flex items-center gap-2">
+                            Local Server Detected
+                            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+                          </h4>
+                          <p className="text-sm text-slate-400">Connected to localhost:3456 - your usage data is ready!</p>
+                        </div>
                       </div>
+                      <button
+                        onClick={loadFromLocalServer}
+                        disabled={localServerLoading}
+                        className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-white font-bold rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
+                      >
+                        {localServerLoading ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Loading...
+                          </>
+                        ) : (
+                          <>
+                            Load Data <ChevronRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
-                  <div className="space-y-3">
-                     <div className="flex items-center gap-4 p-3 rounded-lg bg-slate-800/30 border border-slate-700/50">
-                       <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs">1</div>
-                       <p className="text-sm text-slate-300">Copy the Node.js script code</p>
-                     </div>
-                     <div className="flex items-center gap-4 p-3 rounded-lg bg-slate-800/30 border border-slate-700/50">
-                       <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs">2</div>
-                       <p className="text-sm text-slate-300">Run it: <code>node scan_usage.js</code></p>
-                     </div>
-                     <div className="flex items-center gap-4 p-3 rounded-lg bg-slate-800/30 border border-slate-700/50">
-                       <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs">3</div>
-                       <p className="text-sm text-slate-300">Upload the <code>usage_report.json</code></p>
-                     </div>
+                )}
+
+                {localServerStatus === 'unavailable' && (
+                  <div className="p-5 bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/30 rounded-xl">
+                    <div className="flex items-start gap-4">
+                      <div className="p-2.5 bg-indigo-500/20 rounded-lg shrink-0">
+                        <Server className="w-6 h-6 text-indigo-400" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="text-white font-bold text-lg mb-2">Quick Setup (Recommended)</h4>
+                        <p className="text-slate-400 text-sm mb-4">Run this command in your terminal to start the local server:</p>
+                        <div className="bg-slate-900 rounded-lg p-3 font-mono text-sm">
+                          <code className="text-emerald-400">llm-usage serve</code>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2">
+                          The dashboard will auto-detect the server and show your usage data instantly.
+                        </p>
+                      </div>
+                      <button
+                        onClick={refreshLocalServerCheck}
+                        className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white shrink-0"
+                        title="Refresh connection"
+                      >
+                        <RefreshCw className={`w-5 h-5 ${localServerStatus === 'checking' ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {localServerStatus === 'checking' && (
+                  <div className="p-4 bg-slate-800/50 border border-slate-700 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+                      <span className="text-slate-400">Checking for local server...</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Security Note */}
+                <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 flex gap-3">
+                  <Lock className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div className="text-xs text-slate-300 leading-relaxed">
+                    <strong className="text-emerald-400 block mb-1">100% Private & Secure</strong>
+                    Everything runs locally on your machine. No code, prompts, or data is sent to any server.
                   </div>
                 </div>
 
-                <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden group shadow-2xl relative">
-                  <div className="flex items-center justify-between px-4 py-3 bg-slate-900/80 border-b border-slate-800 backdrop-blur-sm sticky top-0">
-                    <span className="text-xs font-mono text-slate-500">scan_usage.js</span>
-                    <button 
-                      onClick={copyScript}
-                      className="flex items-center gap-1.5 text-xs font-medium text-indigo-400 hover:text-white transition-colors bg-indigo-500/10 hover:bg-indigo-500 px-3 py-1.5 rounded-md"
-                    >
-                      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      {copied ? 'Copied' : 'Copy Code'}
-                    </button>
+                {/* Alternative: Export file method */}
+                <details className="group">
+                  <summary className="cursor-pointer p-4 bg-slate-800/30 border border-slate-700/50 rounded-xl hover:bg-slate-800/50 transition-colors list-none">
+                    <div className="flex items-center gap-3">
+                      <FileJson className="w-5 h-5 text-slate-400" />
+                      <div className="flex-1">
+                        <span className="text-slate-300 font-medium">Alternative: Export to JSON file</span>
+                        <p className="text-xs text-slate-500 mt-0.5">Use <code className="bg-slate-800 px-1.5 py-0.5 rounded">llm-usage scan</code> instead</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-open:rotate-90 transition-transform" />
+                    </div>
+                  </summary>
+                  <div className="mt-4 space-y-3 pl-4 border-l-2 border-slate-700/50">
+                    <div className="flex items-center gap-4 p-3 rounded-lg bg-slate-800/30 border border-slate-700/50">
+                      <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs">1</div>
+                      <p className="text-sm text-slate-300">Run <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-400">llm-usage scan</code> in terminal</p>
+                    </div>
+                    <div className="flex items-center gap-4 p-3 rounded-lg bg-slate-800/30 border border-slate-700/50">
+                      <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs">2</div>
+                      <p className="text-sm text-slate-300">Drag the generated <code className="bg-slate-800 px-1.5 py-0.5 rounded">usage_report.json</code> below</p>
+                    </div>
                   </div>
-                  <div className="relative">
-                    <pre className="p-4 text-[10px] leading-4 font-mono text-slate-300 overflow-auto max-h-[250px] custom-scrollbar selection:bg-indigo-500/30">
-                      {COLLECTOR_SCRIPT_TEMPLATE}
-                    </pre>
-                    <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-transparent to-slate-950/80"></div>
+                </details>
+              </div>
+            )}
+
+            {/* VIEW: OPENAI */}
+            {view === 'openai' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+                {/* Help text */}
+                <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
+                  <div className="flex items-start gap-3">
+                    <Info className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="text-sm text-slate-300">
+                      <strong className="text-emerald-400">Getting OpenAI usage data</strong>
+                      <p className="mt-1 text-slate-400">For API users, we can fetch your usage automatically. ChatGPT Plus/Pro users can view usage on the platform.</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* API Key Form */}
+                <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Key className="w-5 h-5 text-emerald-400" />
+                    API Users: Auto-fetch Usage
+                  </h3>
+                  <form onSubmit={handleApiKeySubmit} className="space-y-4">
+                    <div className="relative group">
+                      <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        disabled={isLoading}
+                        className="w-full bg-slate-950/50 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder:text-slate-600 focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 outline-none transition-all disabled:opacity-50"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-slate-500 mb-1 block flex items-center gap-1">
+                          <Calendar className="w-3 h-3" /> Start Date
+                        </label>
+                        <input
+                          type="date"
+                          value={dateRange.start}
+                          onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                          disabled={isLoading}
+                          className="w-full bg-slate-950/50 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 outline-none disabled:opacity-50"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-500 mb-1 block flex items-center gap-1">
+                          <Calendar className="w-3 h-3" /> End Date
+                        </label>
+                        <input
+                          type="date"
+                          value={dateRange.end}
+                          onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                          disabled={isLoading}
+                          className="w-full bg-slate-950/50 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 outline-none disabled:opacity-50"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-slate-500 flex items-center gap-1">
+                        <EyeOff className="w-3 h-3" />
+                        Key used once, never stored
+                      </p>
+                      <a
+                        href="https://platform.openai.com/api-keys"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                      >
+                        Get API Key <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading || !apiKey}
+                      className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Fetching Usage...
+                        </>
+                      ) : (
+                        <>
+                          Fetch Usage Data <ChevronRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Alternative: View on Platform */}
+                <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                    <Globe className="w-5 h-5 text-purple-400" />
+                    ChatGPT Plus/Pro Users
+                  </h3>
+                  <p className="text-sm text-slate-400 mb-4">
+                    ChatGPT subscription usage is shown on the OpenAI platform. You can view your limits but detailed token counts aren't exported.
+                  </p>
+                  <div className="flex gap-3">
+                    <a
+                      href="https://platform.openai.com/usage"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+                    >
+                      View Usage Dashboard <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                    <a
+                      href="https://chatgpt.com/settings"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+                    >
+                      ChatGPT Settings <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* VIEW: OPENAI FORM */}
-            {view === 'openai' && (
-              <div className="max-w-md mx-auto animate-in fade-in slide-in-from-right-8 duration-500 py-8">
-                 <div className="text-center mb-8">
-                  <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl text-emerald-400 flex items-center justify-center mx-auto mb-4 border border-emerald-500/20 shadow-lg shadow-emerald-500/10">
-                    <Key className="w-8 h-8" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white">Connect OpenAI API</h3>
-                  <p className="text-slate-400 mt-2 text-sm">
-                    Enter a read-only API key. We'll fetch your usage history securely.
-                  </p>
-                </div>
+            {/* VIEW: ANTHROPIC WEB - Step by step guide */}
+            {view === 'anthropic-web' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+                <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Download className="w-5 h-5 text-purple-400" />
+                    How to Export from Claude.ai
+                  </h3>
 
-                <form onSubmit={handleApiKeySubmit} className="space-y-4">
-                  <div className="relative group">
-                    <input 
-                      type="password" 
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="sk-..."
-                      className="w-full bg-slate-950/50 border border-slate-700 rounded-xl px-4 py-4 text-white placeholder:text-slate-600 focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 outline-none transition-all"
-                    />
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-50 group-focus-within:opacity-100 transition-opacity">
-                       <span className="text-[10px] font-bold tracking-wider text-emerald-500/80 bg-emerald-950/50 px-2 py-1 rounded border border-emerald-500/20">API KEY</span>
+                  <div className="space-y-4">
+                    <div className="flex gap-4 p-3 bg-slate-800/50 rounded-lg">
+                      <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm shrink-0">1</div>
+                      <div className="flex-1">
+                        <p className="text-sm text-slate-300">Go to <strong className="text-white">claude.ai</strong> and sign in to your account</p>
+                      </div>
+                      <a
+                        href="https://claude.ai"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-purple-400 hover:text-purple-300 shrink-0"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
+
+                    <div className="flex gap-4 p-3 bg-slate-800/50 rounded-lg">
+                      <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm shrink-0">2</div>
+                      <div className="flex-1">
+                        <p className="text-sm text-slate-300">Click your <strong className="text-white">profile icon</strong> (bottom left) → <strong className="text-white">Settings</strong></p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 p-3 bg-slate-800/50 rounded-lg">
+                      <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm shrink-0">3</div>
+                      <div className="flex-1">
+                        <p className="text-sm text-slate-300">Go to <strong className="text-white">Account</strong> tab → Scroll to <strong className="text-white">"Export Data"</strong></p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 p-3 bg-slate-800/50 rounded-lg">
+                      <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm shrink-0">4</div>
+                      <div className="flex-1">
+                        <p className="text-sm text-slate-300">Click <strong className="text-white">"Export"</strong> → You'll receive an email with a download link</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 p-3 bg-slate-800/50 rounded-lg">
+                      <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm shrink-0">5</div>
+                      <div className="flex-1">
+                        <p className="text-sm text-slate-300">Download the ZIP, extract it, and upload <strong className="text-white">conversations.json</strong> below</p>
+                      </div>
                     </div>
                   </div>
-                  <p className="text-xs text-center text-slate-500 flex items-center justify-center gap-1">
-                    <EyeOff className="w-3 h-3" />
-                    Key is used once for fetching and never stored.
+
+                  <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-start gap-3">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-slate-400">
+                      <strong className="text-amber-400">Note:</strong> Export may take a few minutes. Token counts are estimated from message lengths since Claude.ai doesn't provide exact counts.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Plan Selector */}
+                <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                    <DollarSign className="w-5 h-5 text-purple-400" />
+                    What's your Claude plan?
+                  </h3>
+                  <p className="text-sm text-slate-400 mb-4">
+                    Select your subscription to get accurate cost analysis.
                   </p>
-                  <button 
-                    type="submit"
-                    className="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                  >
-                    Fetch Usage History <ChevronRight className="w-4 h-4" />
-                  </button>
-                </form>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {CLAUDE_PLANS.map((plan) => (
+                      <button
+                        key={plan.name}
+                        onClick={() => setSelectedPlan(plan)}
+                        className={`p-4 rounded-xl border-2 transition-all text-left ${
+                          selectedPlan.name === plan.name
+                            ? 'border-purple-500 bg-purple-500/10'
+                            : 'border-slate-700 hover:border-slate-600 bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="font-semibold text-white">{plan.name}</div>
+                        <div className={`text-2xl font-bold mt-1 ${
+                          selectedPlan.name === plan.name ? 'text-purple-400' : 'text-slate-300'
+                        }`}>
+                          ${plan.price_usd}<span className="text-sm font-normal text-slate-500">/mo</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
             {/* VIEW: UPLOAD / DROPZONE */}
             {(view === 'upload' || view === 'anthropic-web' || view === 'anthropic-cli') && (
-              <div className={`mt-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200`}>
+              <div className={`${view === 'anthropic-web' ? 'mt-6' : 'mt-8'} animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200`}>
                 <div className="flex items-center gap-4 mb-4">
                   <div className="h-px bg-slate-800 flex-1"></div>
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                    {view === 'anthropic-cli' ? 'Step 2: Upload Report' : 'Drop File Here'}
+                    {view === 'anthropic-cli' ? 'Step 2: Upload Report' :
+                     view === 'anthropic-web' ? 'Step 6: Upload File' : 'Drop File Here'}
                   </span>
                   <div className="h-px bg-slate-800 flex-1"></div>
                 </div>

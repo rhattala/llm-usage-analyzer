@@ -1,0 +1,34 @@
+{
+  "name": "@llm-usage/extension",
+  "displayName": "LLM Usage Analyzer",
+  "version": "1.0.0",
+  "description": "Browser extension to collect usage data from Anthropic Console and OpenAI Platform",
+  "author": "LLM Usage Analyzer",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "plasmo": "^0.89.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@plasmohq/prettier-plugin-sort-imports": "^4.0.1",
+    "@types/chrome": "^0.0.270",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "typescript": "^5.3.3"
+  },
+  "manifest": {
+    "host_permissions": [
+      "https://console.anthropic.com/*",
+      "https://platform.openai.com/*"
+    ],
+    "permissions": [
+      "storage",
+      "activeTab"
+    ]
+  }
+}

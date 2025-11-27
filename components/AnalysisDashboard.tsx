@@ -1,19 +1,26 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, LineChart, Line 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, LineChart, Line
 } from 'recharts';
-import { 
-  TrendingUp, TrendingDown, DollarSign, Activity, 
-  AlertTriangle, BrainCircuit, RefreshCw 
+import {
+  TrendingUp, TrendingDown, DollarSign, Activity,
+  AlertTriangle, BrainCircuit, RefreshCw, Scale, Download, FileText, FileSpreadsheet, Copy, Check, Zap, Radio, ChevronDown
 } from 'lucide-react';
 import { UsageReport, AnalysisResult } from '../types';
 import { calculateAnalysis, formatTokenNumber } from '../services/analysisService';
 import { getGeminiRecommendation } from '../services/geminiService';
+import PlanComparison from './PlanComparison';
+import PlanFitAnalyzer from './PlanFitAnalyzer';
+import { exportToJSON, exportToCSV, exportToPDF, copyToClipboard } from '../services/exportService';
+import { PLAN_LIMITS, PlanLimitKey } from '../constants';
 
 interface DashboardProps {
   data: UsageReport;
   onReset: () => void;
+  isLiveData?: boolean;
+  liveServerConnected?: boolean;
+  onLiveRefresh?: () => Promise<void>;
 }
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e'];
@@ -52,10 +59,74 @@ const StatCard: React.FC<{
   </div>
 );
 
-const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
+const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset, isLiveData, liveServerConnected, onLiveRefresh }) => {
   const analysis = useMemo(() => calculateAnalysis(data), [data]);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
+  const [showPlanComparison, setShowPlanComparison] = useState(false);
+  const [showPlanFit, setShowPlanFit] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Global plan selection - persisted to localStorage
+  const [selectedPlan, setSelectedPlan] = useState<PlanLimitKey>(() => {
+    const saved = localStorage.getItem('selectedPlan');
+    return (saved as PlanLimitKey) || 'Claude Max 20x';
+  });
+
+  // Persist plan selection
+  useEffect(() => {
+    localStorage.setItem('selectedPlan', selectedPlan);
+  }, [selectedPlan]);
+
+  const handleRefresh = async () => {
+    if (!onLiveRefresh) return;
+    setIsRefreshing(true);
+    await onLiveRefresh();
+    setIsRefreshing(false);
+  };
+
+  // Determine if data spans multiple months for better X-axis formatting
+  const dateRange = useMemo(() => {
+    const days = data.usage.messages.by_day;
+    if (days.length === 0) return { spansMultipleMonths: false, months: new Set<string>() };
+    const months = new Set(days.map(d => new Date(d.date).toISOString().slice(0, 7)));
+    return { spansMultipleMonths: months.size > 1, months };
+  }, [data]);
+
+  const formatXAxisDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    if (dateRange.spansMultipleMonths) {
+      // Show "Jan 15" format for multi-month data
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    // Just show day number for single month
+    return date.getDate().toString();
+  };
+
+  const handleExport = (format: 'json' | 'csv' | 'pdf') => {
+    setShowExportMenu(false);
+    switch (format) {
+      case 'json':
+        exportToJSON(data);
+        break;
+      case 'csv':
+        exportToCSV(data);
+        break;
+      case 'pdf':
+        exportToPDF(data);
+        break;
+    }
+  };
+
+  const handleCopy = async () => {
+    const success = await copyToClipboard(data);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   useEffect(() => {
     // Auto-trigger simple analysis or wait for user? Let's wait for user interaction or load immediately if small
@@ -76,28 +147,176 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
             Usage Analysis
-            <span className="text-xs font-normal text-slate-400 bg-slate-800 px-2 py-1 rounded-full border border-slate-700">
-              {data.source === 'demo' ? 'DEMO MODE' : 'LIVE DATA'}
-            </span>
+            {isLiveData && liveServerConnected ? (
+              <span className="text-xs font-medium text-red-400 bg-red-500/10 px-3 py-1.5 rounded-full border border-red-500/30 flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                </span>
+                LIVE DATA
+              </span>
+            ) : isLiveData && !liveServerConnected ? (
+              <span className="text-xs font-medium text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-full border border-amber-500/30 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                DISCONNECTED
+              </span>
+            ) : data.source === 'demo' ? (
+              <span className="text-xs font-normal text-slate-400 bg-slate-800 px-2 py-1 rounded-full border border-slate-700">
+                DEMO MODE
+              </span>
+            ) : (
+              <span className="text-xs font-normal text-slate-400 bg-slate-800 px-2 py-1 rounded-full border border-slate-700">
+                UPLOADED
+              </span>
+            )}
           </h2>
           <p className="text-slate-400 text-sm">
             Period: {new Date(data.period.start).toLocaleDateString()} - {new Date(data.period.end).toLocaleDateString()}
           </p>
+          {/* Global Plan Selector */}
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-xs text-slate-500">Your plan:</span>
+            <div className="relative">
+              <select
+                value={selectedPlan}
+                onChange={(e) => setSelectedPlan(e.target.value as PlanLimitKey)}
+                className="appearance-none bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 pr-8 text-white font-medium text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer hover:bg-slate-700 transition-colors"
+              >
+                <option value="Claude Pro">Claude Pro ($20/mo)</option>
+                <option value="Claude Max 5x">Claude Max 5x ($100/mo)</option>
+                <option value="Claude Max 20x">Claude Max 20x ($200/mo)</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            </div>
+          </div>
         </div>
-        <button 
-          onClick={onReset}
-          className="text-sm text-slate-400 hover:text-white flex items-center gap-2 px-4 py-2 hover:bg-slate-800 rounded-lg transition-colors"
-        >
-          <RefreshCw className="w-4 h-4" /> Upload New Data
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Refresh Button - Live Mode Only */}
+          {isLiveData && (
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing || !liveServerConnected}
+              className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium ${
+                liveServerConnected
+                  ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30'
+                  : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+              }`}
+              title={liveServerConnected ? 'Refresh data from server' : 'Server disconnected'}
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+          )}
+
+          {/* Plan Fit Button - Most Important */}
+          <button
+            onClick={() => { setShowPlanFit(!showPlanFit); if (!showPlanFit) setShowPlanComparison(false); }}
+            className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium ${
+              showPlanFit
+                ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20'
+                : 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/30'
+            }`}
+          >
+            <Zap className="w-4 h-4" /> Plan Fit
+          </button>
+
+          {/* Compare Plans Button */}
+          <button
+            onClick={() => { setShowPlanComparison(!showPlanComparison); if (!showPlanComparison) setShowPlanFit(false); }}
+            className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              showPlanComparison
+                ? 'bg-indigo-500 text-white'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Scale className="w-4 h-4" /> Compare Plans
+          </button>
+
+          {/* Export Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="text-sm text-slate-400 hover:text-white flex items-center gap-2 px-4 py-2 hover:bg-slate-800 rounded-lg transition-colors"
+            >
+              <Download className="w-4 h-4" /> Export
+            </button>
+
+            {showExportMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+                <div className="absolute right-0 mt-2 w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
+                  <button
+                    onClick={() => handleExport('json')}
+                    className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-white/5 flex items-center gap-3"
+                  >
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    Export as JSON
+                  </button>
+                  <button
+                    onClick={() => handleExport('csv')}
+                    className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-white/5 flex items-center gap-3"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-slate-400" />
+                    Export as CSV
+                  </button>
+                  <button
+                    onClick={() => handleExport('pdf')}
+                    className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-white/5 flex items-center gap-3"
+                  >
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    Print / Save as PDF
+                  </button>
+                  <div className="border-t border-white/5" />
+                  <button
+                    onClick={handleCopy}
+                    className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-white/5 flex items-center gap-3"
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="w-4 h-4 text-green-400" />
+                        <span className="text-green-400">Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-slate-400" />
+                        Copy to Clipboard
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <button
+            onClick={onReset}
+            className="text-sm text-slate-400 hover:text-white flex items-center gap-2 px-4 py-2 hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" /> New
+          </button>
+        </div>
       </div>
+
+      {/* Plan Fit Analysis Panel */}
+      {showPlanFit && (
+        <div className="animate-in fade-in slide-in-from-top-4 duration-500 bg-slate-900/60 backdrop-blur-xl border border-white/10 rounded-2xl p-8">
+          <PlanFitAnalyzer data={data} currentPlan={selectedPlan} onPlanChange={setSelectedPlan} />
+        </div>
+      )}
+
+      {/* Plan Comparison Panel */}
+      {showPlanComparison && (
+        <div className="animate-in fade-in slide-in-from-top-4 duration-500">
+          <PlanComparison data={data} onClose={() => setShowPlanComparison(false)} />
+        </div>
+      )}
 
       {/* Top Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard 
-          title="Current Plan Cost"
-          value={`$${analysis.currentMonthlyCost.toFixed(2)}`}
-          subtitle={`Plan: ${data.plan.name}`}
+        <StatCard
+          title="Your Plan Cost"
+          value={`$${PLAN_LIMITS[selectedPlan].price}/mo`}
+          subtitle={selectedPlan}
           icon={<DollarSign className="w-5 h-5" />}
           delay={0}
         />
@@ -144,11 +363,15 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.usage.messages.by_day}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(val) => new Date(val).getDate().toString()} 
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={formatXAxisDate}
                     stroke="#94a3b8"
                     fontSize={12}
+                    interval={dateRange.spansMultipleMonths ? 'preserveStartEnd' : 0}
+                    angle={dateRange.spansMultipleMonths ? -45 : 0}
+                    textAnchor={dateRange.spansMultipleMonths ? 'end' : 'middle'}
+                    height={dateRange.spansMultipleMonths ? 60 : 30}
                   />
                   <YAxis 
                     stroke="#94a3b8" 

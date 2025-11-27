@@ -6,8 +6,8 @@ export interface TokenUsage {
 }
 
 export interface UsageReport {
-  provider: 'anthropic' | 'openai' | 'google' | 'other';
-  source: 'local_agent' | 'browser_extension' | 'api' | 'manual_upload' | 'demo';
+  provider: 'anthropic' | 'openai' | 'google' | 'xai' | 'other';
+  source: 'local_agent' | 'browser_extension' | 'api' | 'manual_upload' | 'demo' | 'manual_entry';
   period: {
     start: string; // ISO Date string
     end: string;   // ISO Date string
@@ -48,4 +48,60 @@ export interface AnalysisResult {
   isOverpaying: boolean;
   recommendedPlan: string;
   modelBreakdown: Array<{ name: string; value: number }>;
+}
+
+// Storage types for localStorage persistence
+export interface StoredReport {
+  id: string;
+  report: UsageReport;
+  savedAt: string; // ISO Date string
+  name?: string;   // User-friendly label
+}
+
+export interface UserSettings {
+  currentPlan?: {
+    provider: string;
+    name: string;
+    price_usd: number;
+  };
+  theme?: 'light' | 'dark';
+  lastSyncedAt?: string;
+}
+
+// Extended plan info with limits (for recommendation engine)
+export interface PlanInfo {
+  name: string;
+  provider: 'anthropic' | 'openai' | 'google' | 'xai' | 'other';
+  price_usd: number;
+  billing: 'monthly' | 'annual' | 'payg';
+  type: 'subscription' | 'payg';
+  limits?: {
+    estimated_messages_per_day?: number;
+    tokens_per_month?: number;
+    rate_limit_rpm?: number;
+    models_included?: string[];
+  };
+  pricing?: {
+    input_per_1m_tokens: number;
+    output_per_1m_tokens: number;
+    by_model?: Record<string, { input: number; output: number }>;
+  };
+}
+
+// Trend analysis types
+export interface TrendData {
+  period: string; // "2024-01" for monthly
+  totalTokens: number;
+  totalCost: number;
+  inputTokens: number;
+  outputTokens: number;
+  messageCount: number;
+  sessionCount: number;
+}
+
+export interface UsageTrend {
+  data: TrendData[];
+  percentChange: number; // vs previous period
+  avgDailyCost: number;
+  projectedMonthlyCost: number;
 }
