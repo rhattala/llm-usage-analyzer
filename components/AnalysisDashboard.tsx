@@ -25,8 +25,14 @@ const StatCard: React.FC<{
   icon: React.ReactNode;
   trend?: 'up' | 'down' | 'neutral';
   colorClass?: string;
-}> = ({ title, value, subtitle, icon, trend, colorClass = "text-white" }) => (
-  <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 backdrop-blur-sm">
+  delay?: number;
+}> = ({ title, value, subtitle, icon, trend, colorClass = "text-white", delay = 0 }) => (
+  <div 
+    className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 backdrop-blur-sm 
+               hover:bg-slate-800 hover:border-indigo-500/30 hover:shadow-lg hover:shadow-indigo-500/10 hover:-translate-y-1 transition-all duration-300
+               animate-in fade-in slide-in-from-bottom-4 fill-mode-backwards"
+    style={{ animationDuration: '700ms', animationDelay: `${delay}ms` }}
+  >
     <div className="flex justify-between items-start mb-4">
       <div className="p-2 bg-slate-700/30 rounded-lg text-slate-300">
         {icon}
@@ -66,7 +72,7 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8 pb-20">
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-700">
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
             Usage Analysis
@@ -93,6 +99,7 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
           value={`$${analysis.currentMonthlyCost.toFixed(2)}`}
           subtitle={`Plan: ${data.plan.name}`}
           icon={<DollarSign className="w-5 h-5" />}
+          delay={0}
         />
         <StatCard 
           title="API Equivalent"
@@ -101,6 +108,7 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
           icon={<Activity className="w-5 h-5" />}
           trend={analysis.isOverpaying ? 'down' : 'up'}
           colorClass={analysis.isOverpaying ? 'text-green-400' : 'text-red-400'}
+          delay={100}
         />
         <StatCard 
           title="Monthly Savings"
@@ -108,6 +116,7 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
           subtitle={analysis.isOverpaying ? "If you switch to API" : "You are saving money!"}
           icon={<TrendingDown className="w-5 h-5" />}
           colorClass={analysis.isOverpaying ? 'text-green-400' : 'text-slate-200'}
+          delay={200}
         />
         <StatCard 
           title="Recommendation"
@@ -115,6 +124,7 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
           subtitle="Based on strict cost"
           icon={<BrainCircuit className="w-5 h-5" />}
           colorClass="text-indigo-400"
+          delay={300}
         />
       </div>
 
@@ -125,7 +135,10 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
         <div className="lg:col-span-2 space-y-8">
           
           {/* Daily Usage Chart */}
-          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+          <div 
+            className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 animate-in fade-in slide-in-from-bottom-8 duration-700 fill-mode-backwards"
+            style={{ animationDelay: '400ms' }}
+          >
             <h3 className="text-lg font-semibold text-white mb-6">Daily Token Usage</h3>
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -147,16 +160,19 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                     cursor={{ fill: '#334155', opacity: 0.4 }}
                     formatter={(value: number) => [formatTokenNumber(value), 'Tokens']}
                   />
-                  <Bar dataKey="input" name="Input" stackId="a" fill="#6366f1" radius={[0, 0, 4, 4]} />
-                  <Bar dataKey="output" name="Output" stackId="a" fill="#34d399" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="input" name="Input" stackId="a" fill="#6366f1" radius={[0, 0, 4, 4]} animationDuration={1500} />
+                  <Bar dataKey="output" name="Output" stackId="a" fill="#34d399" radius={[4, 4, 0, 0]} animationDuration={1500} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Model Breakdown */}
+          {/* Model Breakdown & Ratio */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+            <div 
+              className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 animate-in fade-in slide-in-from-bottom-8 duration-700 fill-mode-backwards"
+              style={{ animationDelay: '500ms' }}
+            >
               <h3 className="text-lg font-semibold text-white mb-4">Model Distribution</h3>
               <div className="h-[200px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
@@ -169,6 +185,7 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                       outerRadius={80}
                       paddingAngle={5}
                       dataKey="value"
+                      animationDuration={1500}
                     >
                       {analysis.modelBreakdown.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -191,7 +208,10 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
               </div>
             </div>
 
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+            <div 
+              className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 animate-in fade-in slide-in-from-bottom-8 duration-700 fill-mode-backwards"
+              style={{ animationDelay: '600ms' }}
+            >
                <h3 className="text-lg font-semibold text-white mb-4">Input vs Output</h3>
                <div className="flex flex-col h-full justify-center space-y-6">
                   <div>
@@ -199,9 +219,9 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                       <span className="text-indigo-400">Input (Context)</span>
                       <span className="text-white">{formatTokenNumber(data.usage.tokens.input)}</span>
                     </div>
-                    <div className="w-full bg-slate-700 rounded-full h-2">
+                    <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
                       <div 
-                        className="bg-indigo-500 h-2 rounded-full" 
+                        className="bg-indigo-500 h-2 rounded-full animate-in slide-in-from-left duration-1000" 
                         style={{ width: `${(data.usage.tokens.input / (data.usage.tokens.input + data.usage.tokens.output)) * 100}%` }}
                       ></div>
                     </div>
@@ -211,9 +231,9 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                       <span className="text-emerald-400">Output (Generation)</span>
                       <span className="text-white">{formatTokenNumber(data.usage.tokens.output)}</span>
                     </div>
-                    <div className="w-full bg-slate-700 rounded-full h-2">
+                    <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
                       <div 
-                        className="bg-emerald-500 h-2 rounded-full" 
+                        className="bg-emerald-500 h-2 rounded-full animate-in slide-in-from-left duration-1000" 
                         style={{ width: `${(data.usage.tokens.output / (data.usage.tokens.input + data.usage.tokens.output)) * 100}%` }}
                       ></div>
                     </div>
@@ -227,8 +247,11 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
         </div>
 
         {/* Right Column: AI Insights */}
-        <div className="lg:col-span-1 space-y-4">
-          <div className="bg-gradient-to-br from-indigo-900/50 to-purple-900/50 border border-indigo-500/30 rounded-xl p-6 sticky top-8">
+        <div 
+          className="lg:col-span-1 space-y-4 animate-in fade-in slide-in-from-right-8 duration-700 fill-mode-backwards"
+          style={{ animationDelay: '700ms' }}
+        >
+          <div className="bg-gradient-to-br from-indigo-900/50 to-purple-900/50 border border-indigo-500/30 rounded-xl p-6 sticky top-8 backdrop-blur-sm shadow-xl shadow-indigo-500/5">
             <div className="flex items-center gap-2 mb-4">
               <BrainCircuit className="w-6 h-6 text-indigo-400" />
               <h3 className="text-xl font-bold text-white">AI Advisor</h3>
@@ -242,7 +265,7 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
                 </div>
               ) : (
                 aiAnalysis ? (
-                   <div className="whitespace-pre-line font-light">
+                   <div className="whitespace-pre-line font-light animate-in fade-in duration-500">
                      {aiAnalysis}
                    </div>
                 ) : (
@@ -256,9 +279,9 @@ const AnalysisDashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
 
             <div className="mt-6 pt-6 border-t border-indigo-500/30">
               <h4 className="text-indigo-200 font-medium mb-2">Verdict</h4>
-              <div className={`p-3 rounded-lg text-center font-bold ${
+              <div className={`p-3 rounded-lg text-center font-bold transition-all duration-500 ${
                 analysis.isOverpaying 
-                  ? 'bg-green-500/20 text-green-300 border border-green-500/30' 
+                  ? 'bg-green-500/20 text-green-300 border border-green-500/30 shadow-[0_0_15px_rgba(34,197,94,0.2)]' 
                   : 'bg-slate-700/50 text-slate-300 border border-slate-600'
               }`}>
                 {analysis.isOverpaying 

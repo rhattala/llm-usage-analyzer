@@ -94,11 +94,12 @@ const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 
 async function collectClaudeUsage() {
   console.log('\\x1b[36m%s\\x1b[0m', '🔍 LLM Usage Analyzer - Local Agent');
-  console.log('scanning directory:', PROJECTS_DIR);
+  console.log('Target directory:', PROJECTS_DIR);
   
   if (!fs.existsSync(PROJECTS_DIR)) {
-    console.error('\\x1b[31m%s\\x1b[0m', '❌ Claude projects directory not found at ' + PROJECTS_DIR);
-    console.log('Please ensure you have Claude Code installed and have run projects.');
+    console.error('\\x1b[31m%s\\x1b[0m', '❌ Claude projects directory not found.');
+    console.log('Path checked: ' + PROJECTS_DIR);
+    console.log('Ensure you have Claude Code CLI installed and have initialized projects.');
     return;
   }
 
@@ -121,6 +122,7 @@ async function collectClaudeUsage() {
 
   try {
     const projects = fs.readdirSync(PROJECTS_DIR);
+    console.log(\`Found \${projects.length} project folders...\`);
     
     for (const project of projects) {
       const projectPath = path.join(PROJECTS_DIR, project);
@@ -191,7 +193,13 @@ async function collectClaudeUsage() {
 
     const outFile = 'usage_report.json';
     fs.writeFileSync(outFile, JSON.stringify(usage, null, 2));
-    console.log('\\x1b[32m%s\\x1b[0m', '✅ Report generated: ' + outFile);
+    
+    console.log('\\n' + '='.repeat(40));
+    console.log('\\x1b[32m%s\\x1b[0m', '✅ Report generated successfully!');
+    console.log('File: ' + path.resolve(outFile));
+    console.log('Processed: ' + filesProcessed + ' sessions');
+    console.log('Total Tokens: ' + (usage.usage.tokens.input + usage.usage.tokens.output));
+    console.log('='.repeat(40));
     console.log('👉 Upload this file to the web dashboard.');
 
   } catch (err) {
