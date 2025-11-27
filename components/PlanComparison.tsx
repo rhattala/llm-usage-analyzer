@@ -298,9 +298,13 @@ function calculatePlanEstimates(data: UsageReport): PlanCostEstimate[] {
       monthlyCost = calculatePaygCost(data, plan);
     }
 
+    const normalizedDataPlan = normalizePlanName(data.plan.name);
+    const normalizedDbPlan = normalizePlanName(plan.name);
+
     const isCurrentPlan =
-      data.plan.name.toLowerCase().includes(plan.name.toLowerCase()) ||
-      plan.name.toLowerCase().includes(data.plan.name.toLowerCase());
+      normalizedDataPlan === normalizedDbPlan ||
+      (normalizedDataPlan.includes(normalizedDbPlan) && normalizedDbPlan.length > 3) ||
+      (normalizedDbPlan.includes(normalizedDataPlan) && normalizedDataPlan.length > 3);
 
     estimates.push({
       plan,
@@ -321,6 +325,15 @@ function calculatePlanEstimates(data: UsageReport): PlanCostEstimate[] {
   }
 
   return estimates;
+}
+
+function normalizePlanName(name: string): string {
+  const lower = name.toLowerCase();
+  // Handle user confusion: "Claude 3.0" often implies the standard "Claude Pro" plan
+  if (lower.includes('claude') && !lower.includes('max') && (lower.includes('3.0') || lower.includes('3.5') || lower.includes('3'))) {
+    return 'claude pro';
+  }
+  return lower;
 }
 
 function calculatePaygCost(data: UsageReport, plan: PlanInfo): number {
